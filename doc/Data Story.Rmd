@@ -1,0 +1,193 @@
+---
+title: "Communism and Capitalism Analysis"
+output: html_notebook
+---
+Install and load necessary packages. 
+ 
+```{r, message=FALSE, warning=FALSE}
+packages.used=c("rvest", "tibble", "qdap", 
+                "sentimentr", "ggplot2", "dplyr",
+                "tm", "syuzhet", "factoextra", 
+                "beeswarm", "scales", "RColorBrewer",
+                "RANN", "tm", "topicmodels","readtext")
+
+packages.needed=setdiff(packages.used, 
+                        intersect(installed.packages()[,1], 
+                                  packages.used))
+
+if(length(packages.needed)>0){
+  install.packages(packages.needed, dependencies = TRUE)
+}
+
+
+library("rvest")
+library("tibble")
+library("qdap")
+library("sentimentr")
+library("ggplot2")
+library("dplyr")
+library("tm")
+library("syuzhet")
+library("factoextra")
+library("beeswarm")
+library("scales")
+library("RColorBrewer")
+library("RANN")
+library("tm")
+library("topicmodels")
+library("readtext")
+
+```
+Import data
+```{r}
+ph <- read.csv("../data/philosophy_data.csv", header = TRUE)
+cm <- ph[ph$school = "communism"]
+cp <-  ph[ph$school = "capitalism"]
+cm <- cm.head(2000)
+cp <- cp.head(2000)
+```
+
+#Topic modeling 
+
+Converted capitalism sentences into a corpus
+```{r}
+cp_topics <- Corpus(VectorSource(cp$sentence_lowered))
+
+cp_topics<-tm_map(cp_topics, removeNumbers)
+cp_topics<-tm_map(cp_topics, removeWords, stopwords("english"))
+cp_topics<-tm_map(cp_topics, removeWords, c("the", "may", "one", "must", "can", "will", "two", "upon", "great", "part", "always", "therefore", "much"))
+cp_topics <-tm_map(cp_topics, removePunctuation)
+cp_topics <-tm_map(cp_topics, stripWhitespace)
+```
+
+Document-term matrix is used to create a model with 5 topics with terms that are most probable for each topic
+```{r}
+cp.dtm <-DocumentTermMatrix(cp_topics)
+
+rowTotals <- apply(cp.dtm , 1, sum)
+cp.newdtm  <-cp.dtm[rowTotals> 0, ] 
+cp_lda<-LDA(cp.newdtm, k=5,control=list(seed=1234))
+```
+
+#Terms associated with frequent topics within capitalist texts
+```{r}
+terms(cp_lda, 5) 
+```
+
+From the topics, we can gather that that frequent terms repeated within the school of capitalism
+are associated with economy with a lot of overlap in terms such as labour or profit
+
+Steps are repeated for communism
+```{r}
+cm_topics <- Corpus(VectorSource(cm$sentence_lowered))
+
+cm_topics<-tm_map(cm_topics, removeNumbers)
+cm_topics<-tm_map(cm_topics, removeWords, stopwords("english"))
+cm_topics<-tm_map(cm_topics, removeWords, c("the", "may", "one", "must", "can", "will", "two", "upon","form", "use", "must", "commodities", "value", "therefore"))
+cm_topics <-tm_map(cm_topics, removePunctuation)
+cm_topics <-tm_map(cm_topics, stripWhitespace)
+
+cm.dtm <-DocumentTermMatrix(cm_topics)
+rowTotals <- apply(cm.dtm , 1, sum)
+cm.newdtm  <-cm.dtm[rowTotals> 0, ] 
+cm_lda<-LDA(cm.newdtm, k=5,control=list(seed=1234))
+```
+
+#Topics model for communism
+```{r}
+terms(cm_lda, 5)
+```
+From the topics, we can gather that that frequent terms repeated within the school of communism
+revolve around currency and commodities
+
+
+Grouping the terms by topic
+
+```{r}
+cp_topics<-tidy(cp_lda, matrix ="beta")
+
+cp_top_terms <- beta_topics %>%
+  group_by(topic) %>%
+  slice_max(beta, n = 5) %>% 
+  ungroup() %>%
+  arrange(topic, -beta)
+
+
+cm_topics<-tidy(cm_lda, matrix ="beta")
+
+cm_top_terms <- cm_topics %>%
+  group_by(topic) %>%
+  slice_max(beta, n = 5) %>% 
+  ungroup() %>%
+  arrange(topic, -beta)
+
+```
+
+#Displaying the grouped terms onto a bar chart
+```{r}
+cp_top_terms %>%
+  mutate(Capitalism = reorder_within(term, beta, topic)) %>%
+  ggplot(aes(beta, Capitalism, fill = factor(topic))) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~ topic, scales = "free") +
+  scale_y_reordered()
+
+cm_top_terms %>%
+  mutate(Communism = reorder_within(term, beta, topic)) %>%
+  ggplot(aes(beta, Communism, fill = factor(topic))) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~ topic, scales = "free") +
+  scale_y_reordered()
+
+
+
+
+```
+
+# Sentiment Analysis
+
+```{r}
+tidy_cp <- cp$tokenized_txt 
+tidy_cp <- tibble(line=1:2000, text=tidy_cp)
+tidy_cp <- tidy_cp %>% unnest_tokens(word, text)
+
+tidy_cm <- cm$tokenized_txt 
+tidy_cm <- tibble(line=1:2000, text=tidy_cm)
+tidy_cm <- tidy_cm %>% unnest_tokens(word, text)
+
+nrc_communism <- tidy_cm%>%
+  inner_join(get_sentiments("nrc")) %>%
+  count(word, sentiment, sort = TRUE) %>%
+  ungroup()
+
+nrc_capitalism <- tidy_cp%>%
+  inner_join(get_sentiments("nrc")) %>%
+  count(word, sentiment, sort = TRUE) %>%
+  ungroup()
+
+```
+
+#Visualization
+```{r}
+nrc_communism %>%
+  group_by(sentiment) %>%
+  top_n(10) %>%
+  ggplot(aes(reorder(word, n), n, fill = sentiment)) +
+  geom_bar(alpha = 0.8, stat = "identity", show.legend = FALSE) +
+  facet_wrap(~sentiment, scales = "free_y") +
+  labs(y = "Communism Sentiments", x = NULL) +
+  coord_flip()
+
+nrc_capitalism %>%
+  group_by(sentiment) %>%
+  top_n(10) %>%
+  ggplot(aes(reorder(word, n), n, fill = sentiment)) +
+  geom_bar(alpha = 0.8, stat = "identity", show.legend = FALSE) +
+  facet_wrap(~sentiment, scales = "free_y") +
+  labs(y = "Capitalism Sentiments", x = NULL) +
+  coord_flip()
+
+```
+
+Within Communism, negative sentiments and emotioms correlate with materialism and alienation, whereas, Capitalism associates negative emotions with poverty and inferiority as well as positive emotions with economic individualism
+
